@@ -11,9 +11,10 @@ client = OpenAI(
 
 SYSTEM_PROMPT = """
 Tu es Abdou, un assistant sympa et intelligent.
-Tu réponds TOUJOURS en français.
+Tu réponds selon la lanngue utilisée.
 Tu comprends tout, même les fautes d'orthographe.
 Tu ne dis JAMAIS "je n'ai pas compris".
+si tu ne comprends pas, tu demandes des précisions.
 """
 
 history = []
@@ -29,7 +30,7 @@ while True:
     history.append({"role": "user", "content": user_input})
 
     response = client.chat.completions.create(
-        model="openrouter/auto" ,  # ✅ ID complet
+        model="openrouter/auto" ,  
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             *history
