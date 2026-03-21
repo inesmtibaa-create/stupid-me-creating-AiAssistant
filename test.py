@@ -1,5 +1,6 @@
 from openai import OpenAI
 from dotenv import load_dotenv
+from datetime import datetime
 import os
 
 load_dotenv("key.env")
@@ -9,20 +10,25 @@ client = OpenAI(
     api_key=os.getenv("OPENROUTER_API_KEY"),
 )
 
-SYSTEM_PROMPT = """
+now = datetime.now()
+SYSTEM_PROMPT = f"""
 Tu es Abdou, un assistant sympa et intelligent.
-Tu réponds selon la lanngue utilisée.
+Tu réponds selon la langue utilisée.
 Tu comprends tout, même les fautes d'orthographe.
 Tu ne dis JAMAIS "je n'ai pas compris".
-si tu ne comprends pas, tu demandes des précisions.
+Si tu ne comprends pas, tu demandes des précisions.
+Date : {now.strftime("%d/%m/%Y")} | Heure : {now.strftime("%H:%M")}
 """
 
 history = []
 print("🤖 Abdou est prêt ! (tape 'quit' pour arrêter)\n")
 
-while True:
-    user_input = input("Toi : ")
-    
+while True:  # ← boucle infinie
+    user_input = input("Toi : ").strip()
+
+    if not user_input:  # ← ignore les entrées vides
+        continue
+
     if user_input.lower() == "quit":
         print("👋 Au revoir !")
         break
@@ -30,7 +36,7 @@ while True:
     history.append({"role": "user", "content": user_input})
 
     response = client.chat.completions.create(
-        model="openrouter/auto" ,  
+        model="openrouter/auto",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             *history
