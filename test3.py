@@ -4,7 +4,6 @@ from datetime import datetime
 from gtts import gTTS
 import pygame
 import sounddevice as sd
-import soundfile as sf
 import numpy as np
 import whisper
 import os
@@ -12,123 +11,151 @@ import time
 
 load_dotenv("key.env")
 
-client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=os.getenv("OPENROUTER_API_KEY"),
-)
+MODELS = ["openrouter/auto"]
 
-# Modèles à essayer en ordre
-MODELS = [
-    "mistralai/mistral-7b-instruct:free",
-    "meta-llama/llama-3.2-3b-instruct:free",
-    "google/gemma-3-1b-it:free",
-]
 
-print("⏳ Chargement de Whisper...")
-stt_model = whisper.load_model("base")
-print("✅ Whisper prêt !\n")
 
-def speak(text: str):
-    print(f"🔊 Abdou : {text}")
-    try:
-        pygame.mixer.music.stop()
-        pygame.mixer.quit()
-    except:
-        pass
-    tts = gTTS(text, lang="fr")
-    tts.save("audio.mp3")
-    pygame.mixer.init()
-    pygame.mixer.music.load("audio.mp3")
-    pygame.mixer.music.play()
-    while pygame.mixer.music.get_busy():
-        pygame.time.Clock().tick(10)
-    pygame.mixer.music.unload()
-    pygame.mixer.quit()
+class Assistante:
 
-def listen() -> str:
-    duration = 5
-    sample_rate = 16000
-    print("🎤 Je t'écoute...")
-    audio = sd.rec(
-        int(duration * sample_rate),
-        samplerate=sample_rate,
-        channels=1,
-        dtype="float32"
-    )
-    sd.wait()
+    def __init__(
+        self,
+        nom: str = "Abdou",
+        duree_ecoute_s: float = 5.0,
+        echantillon_hz: int = 16000,
+        modele_whisper: str = "base",
+    ):
+        self.nom = nom
+        self.duree_ecoute_s = duree_ecoute_s
+        self.echantillon_hz = echantillon_hz
+        self.client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=os.getenv("OPENROUTER_API_KEY"),
+        )
+        self.models = MODELS
+        self.history: list[dict] = []
 
-    volume = np.abs(audio).mean()
-    print(f"📊 Volume détecté : {volume:.4f}")
+        now = datetime.now()
+        self.system_prompt = f"""Tu es {nom}, un assistant vocal francophone.
 
-    if volume < 0.001:
-        print("❌ Je n'ai rien entendu... Parle plus fort !")
-        return ""
+LANGUE (priorité absolue) :
+- Écris TOUTE ta réponse en français uniquement. Pas d'anglais, pas de mélange fr/en.
+- Même si l'utilisateur parle anglais ou mélange les langues, tu réponds en français.
+- Les seules exceptions : citations demandées, noms propres, ou si l'utilisateur exige explicitement une phrase en anglais.
+- Style oral, naturel, 1 à 2 phrases courtes.
 
-    print("✅ Je t'ai entendu ! Traitement...")
-    audio_flat = audio.flatten()
-    result = stt_model.transcribe(audio_flat, language="fr")  # ← forcer français
-    text = result["text"].strip()
-    print(f"👂 Tu as dit : '{text}'")
-    return text
+Comportement :
+- Tu restes sympa et tu comprends les fautes ou l'oral mal transcrit.
+- Tu ne dis jamais « je n'ai pas compris » ; tu réponds au mieux en français.
 
-def ask_llm(messages, retries=3) -> str:
-    """Essaie plusieurs modèles si rate limit"""
-    for model in MODELS:
-        for attempt in range(retries):
-            try:
-                print(f"🧠 Essai avec {model}...")
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=messages
-                )
-                return response.choices[0].message.content
-            except Exception as e:
-                if "429" in str(e):
-                    print(f"⚠️ Rate limit sur {model}, attente 3s...")
-                    time.sleep(3)
-                else:
-                    print(f"❌ Erreur : {e}")
-                    break
-    return "Désolé, tous les modèles sont occupés. Réessaie dans quelques secondes."
-
-# ── Main ──
-now = datetime.now()
-SYSTEM_PROMPT = f"""
-Tu es Abdou, un assistant vocal sympa.
-Tu réponds en français, de façon courte (1-2 phrases).
-Tu comprends tout, même les fautes d'orthographe.
-Tu ne dis JAMAIS "je n'ai pas compris".
-Date : {now.strftime("%d/%m/%Y")} | Heure : {now.strftime("%H:%M")}
+Contexte : {now.strftime("%d/%m/%Y")}, {now.strftime("%H:%M")}.
 """
 
-history = []
-print("🤖 Abdou est prêt !\n")
-speak("Bonjour ! Je suis Abdou, je vous écoute !")
+        print("⏳ Chargement de Whisper...")
+        self._stt = whisper.load_model(modele_whisper)
+        print(f"✅ Whisper ({modele_whisper}) prêt !\n")
 
-while True:
-    print("\n─────────────────────")
-    mode = input("Mode → v (voix) / t (texte) / quit : ").strip().lower()
+    def parler(self, texte: str) -> None:
+        print(f"🔊 {self.nom} : {texte}")
+        try:
+            pygame.mixer.music.stop()
+            pygame.mixer.quit()
+        except Exception:
+            pass
+        tts = gTTS(texte, lang="fr")
+        tts.save("audio.mp3")
+        pygame.mixer.init()
+        pygame.mixer.music.load("audio.mp3")
+        pygame.mixer.music.play()
+        while pygame.mixer.music.get_busy():
+            pygame.time.Clock().tick(10)
+        pygame.mixer.music.unload()
+        pygame.mixer.quit()
 
-    if mode == "quit":
-        speak("Au revoir !")
-        break
-    elif mode == "v":
-        user_input = listen()
-        if not user_input:
-            continue
-    elif mode == "t":
-        user_input = input("Toi : ").strip()
-        if not user_input:
-            continue
-    else:
-        continue
+    def ecouter(self) -> str:
+        print("🎤 Je t'écoute...")
+        n = int(self.duree_ecoute_s * self.echantillon_hz)
+        audio = sd.rec(
+            n,
+            samplerate=self.echantillon_hz,
+            channels=1,
+            dtype="float32",
+        )
+        sd.wait()
 
-    history.append({"role": "user", "content": user_input})
+        volume = abs(audio).mean()
+        print(f"📊 Volume détecté : {volume:.4f}")
 
-    reply = ask_llm([
-        {"role": "system", "content": SYSTEM_PROMPT},
-        *history
-    ])
+        if volume < 0.001:
+            print("❌ Je n'ai rien entendu... Parle plus fort !")
+            return ""
 
-    history.append({"role": "assistant", "content": reply})
-    speak(reply)
+        print("✅ Je t'ai entendu ! Traitement...")
+        audio_plat = audio.flatten()
+        resultat = self._stt.transcribe(audio_plat, language="fr")
+        texte = resultat["text"].strip()
+        print(f"👂 Tu as dit : '{texte}'")
+        return texte
+
+    def repondre_llm(self, retries: int = 3) -> str:
+        for model in self.models:
+            for _ in range(retries):
+                try:
+                    print(f"🧠 Essai avec {model}...")
+                    response = self.client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": self.system_prompt},
+                            *self.history,
+                        ],
+                    )
+                    raw = response.choices[0].message.content
+                    return (raw or "").strip()
+                except Exception as e:
+                    if "429" in str(e):
+                        print(f"⚠️ Rate limit sur {model}, attente 3s...")
+                        time.sleep(3)
+                    else:
+                        print(f"❌ Erreur : {e}")
+                        break
+        return "Désolé, tous les modèles sont occupés. Réessaie dans quelques secondes."
+
+    def tour_voix(self) -> bool:
+        """Un échange vocal. Retourne False si l'utilisateur veut arrêter (via logique appelante)."""
+        entree = self.ecouter()
+        if not entree:
+            return True
+
+        self.history.append({"role": "user", "content": entree})
+        reponse = self.repondre_llm()
+        self.history.append({"role": "assistant", "content": reponse})
+        self.parler(reponse)
+        return True
+
+    def boucle(self) -> None:
+        """Modes voix (v), texte (t), quit."""
+        print(f"🤖 {self.nom} est prêt !\n")
+        self.parler(f"Bonjour ! Je suis {self.nom}, je vous écoute !")
+
+        while True:
+            print("\n─────────────────────")
+            mode = input("Mode → v (voix) / t (texte) / quit : ").strip().lower()
+
+            if mode == "quit":
+                self.parler("Au revoir !")
+                break
+            if mode == "v":
+                self.tour_voix()
+            elif mode == "t":
+                entree = input("Toi : ").strip()
+                if not entree:
+                    continue
+                self.history.append({"role": "user", "content": entree})
+                reponse = self.repondre_llm()
+                self.history.append({"role": "assistant", "content": reponse})
+                self.parler(reponse)
+            else:
+                continue
+
+
+if __name__ == "__main__":
+    Assistante().boucle()
